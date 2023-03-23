@@ -6,10 +6,10 @@ import random
 
 class Node:
 
-    def __init__(self, x=0, y=0, power=1000, target=10800, ddl=4000):
+    def __init__(self, x=0, y=0, power=1000, target=10800):
         self.x = x
         self.y = y
-        self.ddl = ddl
+        self.ddl = random.randint(10, 1200)
         self.power = power
         self.target = target
         self.ouput_power = 0.5
@@ -27,18 +27,18 @@ class Node:
 
 class Plan:
 
-    def __init__(self, node: Node, move_time, charge_time, ddl):
+    def __init__(self, node: Node, move_time, charge_time):
         self.node = node
         self.move_time = move_time
         self.charge_time = charge_time
         self.total = move_time + charge_time
-        self.ddl = ddl
         self.origin_wait = 0
         self.station_wait = 0
+        self.dif_time = 0
 
     def __repr__(self) -> str:
-        return '<MoveTime:' + str(self.move_time) + '|ChargeTime:' + str(
-            self.charge_time) + '|Total:' + str(self.total) + '>'
+        return '<OW:' + str(self.origin_wait) + '|SW:' + str(
+            self.station_wait) + '|Tol:' + str(self.total) + '>'
 
 
 class Base_Staion:
@@ -60,12 +60,10 @@ class Base_Staion:
         return math.sqrt(relative_x * relative_x + relative_y * relative_y)
 
     def initSchedule(self):
-
         for node in self.node_set:
             plan = Plan(node,
                         self.getLen(node) / node.speed,
-                        (node.target - node.power) / self.charging_power,
-                        node.ddl)
+                        (node.target - node.power) / self.charging_power)
 
             if plan.move_time < self.start_time:
                 self.start_time = plan.move_time
@@ -74,7 +72,48 @@ class Base_Staion:
                 self.end_time = plan.total
 
             self.schedule_set.append(plan)
+
         return self.base_node
+
+    def optSchedule(self):
+        schedule_set: list[Plan] = copy.deepcopy(self.schedule_set)
+        for plan in schedule_set:
+            plan.dif_time = self.end_time - plan.total
+            D = self.charging_power / plan.node.ouput_power
+
+            # situation 1: charging_power / node.ouput_power * ddl <= △T
+            if (D + 1) * plan.node.ddl <= plan.dif_time:
+                plan.origin_wait = D * plan.node.ddl
+                plan.charge_time += plan.node.ddl
+                plan.total = plan.origin_wait + plan.move_time + plan.charge_time
+
+            # situation 2: ddl≤ △T < charging_power / node.ouput_power * ddl
+            elif plan.dif_time >= plan.node.ddl and plan.dif_time < (
+                    D + 1) * plan.node.ddl:
+                plan.origin_wait = plan.dif_time - plan.node.ddl
+                plan.charge_time += plan.origin_wait / (self.charging_power /
+                                                        plan.node.ouput_power)
+                plan.station_wait = plan.node.ddl - plan.origin_wait / D
+                plan.total = plan.origin_wait + plan.move_time + plan.station_wait + plan.charge_time
+
+            # situation 3: ddl > △T
+            elif plan.node.ddl > plan.dif_time:
+                plan.station_wait = plan.dif_time
+                plan.total += plan.station_wait
+
+        st = 100000
+        for plan in schedule_set:
+            st = (plan.origin_wait + plan.move_time +
+                  plan.station_wait) if (plan.origin_wait + plan.move_time +
+                                         plan.station_wait) < st else st
+        print('Final Schedule:\nStart Time:', st, '& End Time:',
+              self.end_time)
+        print(
+            'Optimized ratio:',
+            round((st - self.start_time) / (self.end_time - self.start_time) *
+                  100, 2), '%')
+        print('----------------------------------------------')
+        return schedule_set
 
     def getOverlapTime(self, plan: Plan) -> int:
         if plan.total < self.base_node['plan'].move_time:
@@ -94,12 +133,9 @@ class Base_Staion:
     def waitAtOrigin(self):
         schedule_set: list[Plan] = copy.deepcopy(self.schedule_set)
         for plan in schedule_set:
-            plan.ddl = round(plan.ddl - plan.move_time * 2 - plan.charge_time)
-            if plan.ddl < 0:
-                plan.ddl = round(plan.move_time * 2 - plan.charge_time)
-            for t in range(1, plan.ddl):
-                if plan.total + (self.charging_power /
-                                 plan.node.ouput_power) * t <= self.end_time:
+            for t in range(1, plan.node.ddl):
+                if plan.total + (self.charging_power / plan.node.ouput_power +
+                                 1) * t <= self.end_time:
                     plan.origin_wait = t
             plan.charge_time += plan.origin_wait
             plan.move_time += plan.origin_wait * 10
@@ -115,16 +151,13 @@ class Base_Staion:
             round((st - self.start_time) / (self.end_time - self.start_time) *
                   100, 2), '%')
         print('----------------------------------------------')
-
-        return [self.getOverlapTime(p) for p in schedule_set]
+        return schedule_set
+        # return [self.getOverlapTime(p) for p in schedule_set]
 
     def waitAtStation(self):
         schedule_set: list[Plan] = copy.deepcopy(self.schedule_set)
         for plan in schedule_set:
-            plan.ddl = round(plan.ddl - plan.move_time * 2 - plan.charge_time)
-            if plan.ddl < 0:
-                plan.ddl = round(plan.move_time * 2 - plan.charge_time)
-            for t in range(1, plan.ddl):
+            for t in range(1, plan.node.ddl):
                 if plan.total + t <= self.end_time:
                     plan.station_wait = t
             plan.move_time += plan.station_wait
@@ -140,20 +173,17 @@ class Base_Staion:
             round((st - self.start_time) / (self.end_time - self.start_time) *
                   100, 2), '%')
         print('----------------------------------------------')
-
-        return [self.getOverlapTime(p) for p in schedule_set]
+        return schedule_set
+        # return [self.getOverlapTime(p) for p in schedule_set]
 
     def synthesizeWait(self):
         schedule_set: list[Plan] = copy.deepcopy(self.schedule_set)
         for plan in schedule_set:
-            plan.ddl = round(plan.ddl - plan.move_time * 2 - plan.charge_time)
-            if plan.ddl < 0:
-                plan.ddl = round(plan.move_time * 2 - plan.charge_time)
-            for t1 in range(1, plan.ddl):
+            for t1 in range(1, plan.node.ddl):
                 if plan.total + 11 * t1 <= self.end_time:
                     plan.origin_wait = 10 * t1
                 else:
-                    for t2 in range(1, plan.ddl - t1):
+                    for t2 in range(1, plan.node.ddl - t1):
                         if plan.total + plan.origin_wait * 1.1 + t2 <= self.end_time:
                             plan.station_wait = t2
             plan.move_time += plan.origin_wait + plan.station_wait
@@ -171,7 +201,7 @@ class Base_Staion:
                   100, 2), '%')
         print('----------------------------------------------')
 
-        return [self.getOverlapTime(p) for p in schedule_set]
+        # return [self.getOverlapTime(p) for p in schedule_set]
 
 
 Node_set = []
@@ -186,12 +216,15 @@ station = Base_Staion(500, 500, Node_set)
 base_node = station.initSchedule()
 # print('Base Node Coordinate:', base_node['info'].getX(),
 #       base_node['info'].getY())
-print('Initial Plan:\nStart Time:', station.start_time, '& End Time:',
+print('Initial Plan:\nBase Node:',station.base_node['plan'].move_time, 'Start Time:', station.start_time, '& End Time:',
       station.end_time)
 # print('Overlap Set:', station.getOverlapSet())
-station.getOverlapSet()
-# print('----------------------------------------------')
+# station.getOverlapSet()
+print('----------------------------------------------')
 # print('Overlap Set(wait at origin):', station.waitAtOrigin())
+WAO = station.waitAtOrigin()
 station.waitAtStation()
-station.waitAtOrigin()
-station.synthesizeWait()
+OPT = station.optSchedule()
+# station.synthesizeWait()
+# print(WAO)
+# print(OPT)
