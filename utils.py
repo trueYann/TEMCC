@@ -189,7 +189,7 @@ class Base_Staion:
                 plan.station_wait = plan.dif_time
                 plan.total += plan.station_wait
 
-        st = 100000
+        st = float('inf')
         for plan in schedule_set:
             st = (plan.origin_wait + plan.move_time +
                   plan.station_wait) if (plan.origin_wait + plan.move_time +
