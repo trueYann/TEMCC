@@ -46,7 +46,8 @@ import { ref } from 'vue'
 import Konva from 'konva'
 import nodeIcon from '@/assets/satellite-solid.svg'
 import stationIcon from '@/assets/tower-cell-solid.svg'
-import type { node, station } from '@/utils/types'
+import { Device, Station, type node, type plan, type station } from '@/utils/types'
+import { CSCO, reachable } from '@/utils/funcs'
 
 const container = ref<string | HTMLDivElement>('')
 const width = ref(1000)
@@ -59,22 +60,6 @@ const nodes = <node[]>[]
 const stations = <station[]>[]
 
 function init() {
-  // 初始化数据
-  nodes.length = 0
-  stations.length = 0
-  for (let i = 0; i < nodeCount.value; i++) {
-    nodes.push({
-      x: Math.floor(Math.random() * (width.value + 1)),
-      y: Math.floor(Math.random() * (height.value + 1)),
-      speed: 5
-    })
-  }
-  for (let i = 0; i < stationCount.value; i++) {
-    stations.push({
-      x: Math.floor(Math.random() * (width.value + 1)),
-      y: Math.floor(Math.random() * (height.value + 1))
-    })
-  }
   // 初始化Konva画布
   const canvasWidth = width.value + 50
   const canvasHeight = height.value + 50
@@ -159,32 +144,31 @@ function init() {
   }
 
   // 加载充电节点图片
-  const nodeImg = new Image()
-  const stationImg = new Image()
-  nodeImg.src = nodeIcon
-  stationImg.src = stationIcon
-
-  // 监听图片加载完成的事件
-  nodeImg.onload = () => {
-    // 添加充电节点
-    nodes.forEach((node) => {
-      const nodeIcon = new Konva.Image({
-        image: nodeImg, // 图片资源
-        x: node.x - 10,
-        y: node.y - 10,
-        width: 20, // 宽度
-        height: 20 // 高度
-      })
-      node.icon = nodeIcon
-      layer.add(nodeIcon)
+  let mulitImg = [nodeIcon, stationIcon]
+  let promiseAll = [],
+    img: HTMLImageElement[] = []
+  for (let i = 0; i < mulitImg.length; i++) {
+    promiseAll[i] = new Promise((resolve, reject) => {
+      img[i] = new Image()
+      img[i].src = mulitImg[i]
+      img[i].onload = function () {
+        //第i张加载完成
+        resolve(img[i])
+      }
     })
   }
+  Promise.all(promiseAll).then((p) => {
+    //全部加载完成
+    stations.length = 0
+    nodes.length = 0
 
-  stationImg.onload = () => {
+    for (let i = 0; i < stationCount.value; i++) {
+      stations.push(new Station(width.value, height.value))
+    }
     // 创建 Konva Image 对象
     stations.forEach((station) => {
       const stationIcon = new Konva.Image({
-        image: stationImg, // 图片资源
+        image: img[0], // 图片资源
         x: station.x - 15, // x 坐标
         y: station.y - 15, // y 坐标
         width: 30, // 宽度
@@ -194,8 +178,27 @@ function init() {
       // 将节点图标添加到图层上
       layer.add(stationIcon)
     })
-  }
+    let i = 0
+    while (i < nodeCount.value) {
+      const x = Math.floor(Math.random() * (width.value + 1))
+      const y = Math.floor(Math.random() * (height.value + 1))
+      const nodeIcon = new Konva.Image({
+        image: img[1], // 图片资源
+        x: x - 10,
+        y: y - 10,
+        width: 20, // 宽度
+        height: 20 // 高度
+      })
 
+      // 添加充电节点
+      const device = new Device(x, y, nodeIcon)
+      if (reachable(device, stations)) {
+        i++
+        nodes.push(device)
+        layer.add(nodeIcon)
+      }
+    }
+  })
   // 将图层添加到舞台
   stage.add(layer)
 
@@ -205,49 +208,56 @@ function init() {
 
 function handleStart() {
   // TODO: generate elements and start simulation
-  for (let node of nodes) {
-    moveNode(node.icon as Konva.Image, stations[0], 2000)
-    console.log(node)
+  let flag = false
+  for (const s of stations) {
+    if (s.schedule_set?.length) {
+      flag = true
+      console.log(s)
+    }
+  }
+  if (!flag) {
+    CSCO(stations, nodes)
+  }
+  for (let s of stations) {
+    if (s.schedule_set?.length) {
+      for (let p of s.schedule_set) {
+        moveNode(p, s)
+      }
+    }
   }
 }
 
 // 移动节点的动画函数
-function moveNode(node: Konva.Image, baseStation: station, delay: number) {
-  // 计算节点移动距离和角度
-  const deltaX = baseStation.x - node.x()
-  const deltaY = baseStation.y - node.y()
-  const distance = Math.sqrt(deltaX ** 2 + deltaY ** 2)
-  const oldX = node.x()
-  const oldY = node.y()
-
-  // 计算节点移动所需时间
-  const speed = 500 // 5m/s(100x magnification)
-  const time = distance / speed
+function moveNode(plan: plan, baseStation: station) {
+  const oldX = plan.node.iconObj.x()
+  const oldY = plan.node.iconObj.y()
 
   // 创建Tween动画
   const tween = new Konva.Tween({
-    node: node,
+    node: plan.node.iconObj,
     x: baseStation.x,
     y: baseStation.y,
-    duration: time,
+    duration: plan.move_time / 1000,
     easing: Konva.Easings.Linear,
     onFinish: function () {
       // 动画完成后添加延迟后再进行回到原位置的动画
       setTimeout(function () {
         const returnTween = new Konva.Tween({
-          node: node,
+          node: plan.node.iconObj,
           x: oldX,
           y: oldY,
-          duration: time,
+          duration: plan.move_time / 1000,
           easing: Konva.Easings.Linear
         })
         returnTween.play()
-      }, delay)
+      }, plan.charge_time)
     }
   })
 
   // 播放Tween动画
-  tween.play()
+  setTimeout(() => {
+    tween.play()
+  }, plan.origin_wait)
 }
 </script>
 
