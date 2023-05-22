@@ -35,6 +35,7 @@
         <div style="display: flex; width: 250px; justify-content: space-around">
           <button style="width: 100px" @click="init">Init</button>
           <button style="width: 100px" @click="handleStart">Start</button>
+          <button style="width: 100px" @click="Simulation">Simulation</button>
         </div>
       </div>
     </div>
@@ -47,17 +48,65 @@ import Konva from 'konva'
 import nodeIcon from '@/assets/satellite-solid.svg'
 import stationIcon from '@/assets/tower-cell-solid.svg'
 import { Device, Station, type node, type plan, type station } from '@/utils/types'
-import { CSCO, reachable } from '@/utils/funcs'
+import { CSCO, NCSA, SCSCO, SOA, reachable } from '@/utils/funcs'
 
 const container = ref<string | HTMLDivElement>('')
 const width = ref(1000)
-const height = ref(600)
-const stationCount = ref(3)
-const nodeCount = ref(10)
+const height = ref(1000)
+const stationCount = ref(10)
+const nodeCount = ref(150)
 
 const nodes = <node[]>[]
 
 const stations = <station[]>[]
+
+function test() {
+  const t_nodes = <node[]>[]
+  const t_stations = <station[]>[]
+
+  for (let i = 0; i < stationCount.value; i++) {
+    t_stations.push(new Station(width.value, height.value))
+  }
+  let i = 0
+  while (i < nodeCount.value) {
+    const x = Math.floor(Math.random() * (width.value + 1))
+    const y = Math.floor(Math.random() * (height.value + 1))
+    // 添加充电节点
+    const device = new Device(x, y)
+    if (reachable(device, t_stations)) {
+      i++
+      t_nodes.push(device)
+    }
+  }
+  const scsco = SCSCO(t_stations, t_nodes)
+  const ncsa = NCSA(t_stations, t_nodes)
+  const soa = SOA(t_stations, t_nodes)
+  const csco = CSCO(t_stations, t_nodes)
+  return {
+    scsco,
+    ncsa,
+    soa,
+    csco
+  }
+}
+function Simulation() {
+  const tes_res = [0, 0, 0, 0]
+  const times = 50
+  for (let i = 0; i < times; i++) {
+    const res = test()
+    tes_res[0] += res.csco
+    tes_res[1] += res.scsco
+    tes_res[2] += res.ncsa
+    tes_res[3] += res.soa
+  }
+  console.log(
+    'test result:',
+    tes_res[0] / times,
+    tes_res[1] / times,
+    tes_res[2] / times,
+    tes_res[3] / times
+  )
+}
 
 function init() {
   // 初始化Konva画布
@@ -208,11 +257,12 @@ function init() {
 
 function handleStart() {
   // TODO: generate elements and start simulation
+  console.log('stations:', stations)
+
   let flag = false
   for (const s of stations) {
     if (s.schedule_set?.length) {
       flag = true
-      console.log(s)
     }
   }
   if (!flag) {
